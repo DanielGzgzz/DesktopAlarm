@@ -11,39 +11,53 @@ RPI_IP=$(ping -c 1 raspberrypi.local 2>/dev/null | awk -F'[()]' '/PING/{print $2
 if [ -z "$RPI_IP" ]; then
     echo "mDNS failed. Falling back to ARP scan..."
 
+    # We must ping the broadcast or common IPs to populate the ARP cache, otherwise ip neigh returns nothing.
+    SUBNET=$(ip -o -f inet addr show | awk '/scope global/ {print $4}' | head -n 1)
+    if [ -n "$SUBNET" ]; then
+        echo "Pinging subnet $SUBNET to populate ARP cache (this takes a few seconds)..."
+        # Extract the base IP (e.g. 192.168.1)
+        BASE_IP=$(echo $SUBNET | awk -F. '{print $1"."$2"."$3}')
+        # Quickly ping the first 20 IPs in the background to populate ARP table without relying on nmap
+        for i in {1..20}; do
+            ping -c 1 -W 1 $BASE_IP.$i >/dev/null 2>&1 &
+        done
+        wait
+    fi
+
     # Get a list of reachable IPv4 IPs from the ARP table
     MAP_OUT=$(ip -4 neigh | awk '/REACHABLE|STALE/{print $1}')
 
-    if [ -z "$MAP_OUT" ]; then
-        echo "No servers found on the network."
-        return 1 2>/dev/null || kill -INT $$
-    fi
+    if [ -n "$MAP_OUT" ]; then
+        IFS=$'\n' read -r -d '' -a IP_ARRAY <<< "$MAP_OUT"
 
-    IFS=$'\n' read -r -d '' -a IP_ARRAY <<< "$MAP_OUT"
-
-    FILTERED_IPS=()
-    for ip in "${IP_ARRAY[@]}"; do
-        if [[ ! "$ip" =~ \.1$ ]] && [[ ! "$ip" =~ \.254$ ]]; then
-            FILTERED_IPS+=("$ip")
-        fi
-    done
-
-    if [ ${#FILTERED_IPS[@]} -eq 0 ]; then
-        echo "No SSH servers found on the network."
-        return 1 2>/dev/null || kill -INT $$
-    elif [ ${#FILTERED_IPS[@]} -eq 1 ]; then
-        RPI_IP="${FILTERED_IPS[0]}"
-        echo "Found one potential SSH server at $RPI_IP"
-    else
-        echo "Multiple servers found. Please select the Raspberry Pi (often 192.168.1.5):"
-        select ip in "${FILTERED_IPS[@]}"; do
-            if [ -n "$ip" ]; then
-                RPI_IP=$ip
-                break
-            else
-                echo "Invalid selection."
+        FILTERED_IPS=()
+        for ip in "${IP_ARRAY[@]}"; do
+            if [[ ! "$ip" =~ \.1$ ]] && [[ ! "$ip" =~ \.254$ ]]; then
+                FILTERED_IPS+=("$ip")
             fi
         done
+
+        if [ ${#FILTERED_IPS[@]} -eq 1 ]; then
+            RPI_IP="${FILTERED_IPS[0]}"
+            echo "Found one potential SSH server at $RPI_IP"
+        elif [ ${#FILTERED_IPS[@]} -gt 1 ]; then
+            echo "Multiple servers found. Please select the Raspberry Pi (often 192.168.1.5):"
+            select ip in "${FILTERED_IPS[@]}"; do
+                if [ -n "$ip" ]; then
+                    RPI_IP=$ip
+                    break
+                else
+                    echo "Invalid selection."
+                fi
+            done
+        fi
+    fi
+
+    # Ultimate fallback since the user explicitly noted it's usually on .5
+    if [ -z "$RPI_IP" ]; then
+        echo "ARP scan failed to find unique IPs."
+        echo "Falling back to the default DietPi static IP: 192.168.1.5"
+        RPI_IP="192.168.1.5"
     fi
 fi
 
