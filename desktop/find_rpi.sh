@@ -19,7 +19,7 @@ if [ -z "$RPI_IP" ]; then
     fi
 
     echo "Scanning subnet $SUBNET for devices with port 22 open..."
-    MAP_OUT=$(nmap -p 22 --open $SUBNET -oG - | awk '/Up$/{print $2}')
+    MAP_OUT=$(ip neigh | awk '/REACHABLE|STALE/{print $1}')
 
     if [ -z "$MAP_OUT" ]; then
         echo "No SSH servers found on the network."
