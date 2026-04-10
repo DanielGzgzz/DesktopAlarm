@@ -49,7 +49,7 @@ fi
 
 if [ -n "$RPI_IP" ]; then
     echo "Connecting to $RPI_USER@$RPI_IP..."
-    ssh $RPI_USER@$RPI_IP
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $RPI_USER@$RPI_IP
 else
     echo "Could not determine Raspberry Pi IP."
     exit 1
