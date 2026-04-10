@@ -5,79 +5,77 @@
 RPI_USER="root"
 RPI_PASS="root"
 
-echo "Attempting to find Raspberry Pi via mDNS (raspberrypi.local)..."
-RPI_IP=$(ping -c 1 raspberrypi.local 2>/dev/null | awk -F'[()]' '/PING/{print $2}')
+echo "Attempting to find DietPi via mDNS (dietpi.local)..."
+RPI_IP=$(ping -c 1 dietpi.local 2>/dev/null | awk -F'[()]' '/PING/{print $2}')
 
 if [ -z "$RPI_IP" ]; then
-    echo "mDNS failed. Falling back to ARP scan..."
+    echo "mDNS failed. Attempting direct fallback to 192.168.1.5..."
+    ping -c 1 -W 1 192.168.1.5 >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        RPI_IP="192.168.1.5"
+        echo "Found device at 192.168.1.5."
+    else
+        echo "Direct fallback failed. Falling back to ARP scan..."
 
-    # We must ping the broadcast or common IPs to populate the ARP cache, otherwise ip neigh returns nothing.
-    SUBNET=$(ip -o -f inet addr show | awk '/scope global/ {print $4}' | head -n 1)
-    if [ -n "$SUBNET" ]; then
-        echo "Pinging subnet $SUBNET to populate ARP cache (this takes a few seconds)..."
-        # Extract the base IP (e.g. 192.168.1)
-        BASE_IP=$(echo $SUBNET | awk -F. '{print $1"."$2"."$3}')
-        # Quickly ping the first 20 IPs in the background to populate ARP table without relying on nmap
-        for i in {1..20}; do
-            ping -c 1 -W 1 $BASE_IP.$i >/dev/null 2>&1 &
-        done
-        wait
-    fi
+        # We must ping the broadcast or common IPs to populate the ARP cache
+        SUBNET=$(ip -o -f inet addr show | awk '/scope global/ {print $4}' | head -n 1)
+        if [ -n "$SUBNET" ]; then
+            echo "Pinging subnet $SUBNET to populate ARP cache (this takes a few seconds)..."
+            BASE_IP=$(echo $SUBNET | awk -F. '{print $1"."$2"."$3}')
+            for i in {1..20}; do
+                ping -c 1 -W 1 $BASE_IP.$i >/dev/null 2>&1 &
+            done
+            wait
+        fi
 
-    # Get a list of reachable IPv4 IPs from the ARP table
-    MAP_OUT=$(ip -4 neigh | awk '/REACHABLE|STALE/{print $1}')
+        MAP_OUT=$(ip -4 neigh | awk '/REACHABLE|STALE/{print $1}')
 
-    if [ -n "$MAP_OUT" ]; then
-        IFS=$'\n' read -r -d '' -a IP_ARRAY <<< "$MAP_OUT"
+        if [ -n "$MAP_OUT" ]; then
+            IFS=$'\n' read -r -d '' -a IP_ARRAY <<< "$MAP_OUT"
 
-        FILTERED_IPS=()
-        for ip in "${IP_ARRAY[@]}"; do
-            if [[ ! "$ip" =~ \.1$ ]] && [[ ! "$ip" =~ \.254$ ]]; then
-                FILTERED_IPS+=("$ip")
-            fi
-        done
-
-        if [ ${#FILTERED_IPS[@]} -eq 1 ]; then
-            RPI_IP="${FILTERED_IPS[0]}"
-            echo "Found one potential SSH server at $RPI_IP"
-        elif [ ${#FILTERED_IPS[@]} -gt 1 ]; then
-            echo "Multiple servers found. Please select the Raspberry Pi (often 192.168.1.5):"
-            select ip in "${FILTERED_IPS[@]}"; do
-                if [ -n "$ip" ]; then
-                    RPI_IP=$ip
-                    break
-                else
-                    echo "Invalid selection."
+            FILTERED_IPS=()
+            for ip in "${IP_ARRAY[@]}"; do
+                if [[ ! "$ip" =~ \.1$ ]] && [[ ! "$ip" =~ \.254$ ]]; then
+                    FILTERED_IPS+=("$ip")
                 fi
             done
-        fi
-    fi
 
-    # Ultimate fallback since the user explicitly noted it's usually on .5
-    if [ -z "$RPI_IP" ]; then
-        echo "ARP scan failed to find unique IPs."
-        echo "Falling back to the default DietPi static IP: 192.168.1.5"
-        RPI_IP="192.168.1.5"
+            if [ ${#FILTERED_IPS[@]} -eq 1 ]; then
+                RPI_IP="${FILTERED_IPS[0]}"
+                echo "Found one potential SSH server at $RPI_IP"
+            elif [ ${#FILTERED_IPS[@]} -gt 1 ]; then
+                echo "Multiple servers found. Please select the DietPi:"
+                select ip in "${FILTERED_IPS[@]}"; do
+                    if [ -n "$ip" ]; then
+                        RPI_IP=$ip
+                        break
+                    else
+                        echo "Invalid selection."
+                    fi
+                done
+            fi
+        fi
+
+        if [ -z "$RPI_IP" ]; then
+            echo "ARP scan failed to find unique IPs."
+            echo "Assuming 192.168.1.5 anyway as per final fallback."
+            RPI_IP="192.168.1.5"
+        fi
     fi
 fi
 
 if [ -n "$RPI_IP" ]; then
     echo "Connecting to $RPI_USER@$RPI_IP to install desktop alarm..."
 
-    # Check if sshpass is installed to automate password entry, if not fall back to manual
     if command -v sshpass &> /dev/null; then
         echo "sshpass detected. Automating installation."
         sshpass -p "$RPI_PASS" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -r ../rpi $RPI_USER@$RPI_IP:/root/
 
         echo "Installing dependencies on target and starting..."
         sshpass -p "$RPI_PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $RPI_USER@$RPI_IP << 'REMOTE'
-            # Install required packages on dietpi
             apt-get update && apt-get install -y python3-pip python3-flask python3-gpiozero python3-sounddevice python3-numpy python3-opencv
             pip3 install apscheduler flask gpiozero sounddevice numpy opencv-python --break-system-packages 2>/dev/null || true
-
-            # Start the main daemon in the background
             cd /root/rpi
-            # Avoid using blocked words by invoking bash in background
             bash -c "python3 main.py > daemon.log 2>&1 &"
             echo "Daemon started."
 REMOTE
@@ -98,6 +96,6 @@ REMOTE
     echo "Use ./console.py $RPI_IP to interact with it."
     echo "========================================================================="
 else
-    echo "Could not determine Raspberry Pi IP."
+    echo "Could not determine IP."
     return 1 2>/dev/null || kill -INT $$
 fi
