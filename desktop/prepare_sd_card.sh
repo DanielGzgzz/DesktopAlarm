@@ -9,8 +9,8 @@ fi
 BOOT_PARTITION=$1
 SSID=$2
 PASS=$3
-RPI_USER=${4:-admin}
-RPI_PASS=${5:-test1234}
+RPI_USER=${4:-dietpi}
+RPI_PASS=${5:-dietpi}
 
 echo "Enabling SSH on the SD card..."
 touch "$BOOT_PARTITION/ssh"
