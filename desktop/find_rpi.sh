@@ -3,7 +3,7 @@
 # Scans the local network to find the Raspberry Pi and initiates an SSH connection.
 
 # Default to the old 'pi' user unless passed as an argument
-RPI_USER=${1:-dietpi}
+RPI_USER=${1:-root}
 
 echo "Attempting to find Raspberry Pi via mDNS (raspberrypi.local)..."
 RPI_IP=$(ping -c 1 raspberrypi.local 2>/dev/null | awk -F'[()]' '/PING/{print $2}')
