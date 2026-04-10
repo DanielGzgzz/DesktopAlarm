@@ -2,7 +2,8 @@
 # find_rpi.sh
 # Scans the local network to find the Raspberry Pi and initiates an SSH connection.
 
-RPI_USER="pi"
+# Default to the old 'pi' user unless passed as an argument
+RPI_USER=${1:-pi}
 
 echo "Attempting to find Raspberry Pi via mDNS (raspberrypi.local)..."
 RPI_IP=$(ping -c 1 raspberrypi.local 2>/dev/null | awk -F'[()]' '/PING/{print $2}')
@@ -14,7 +15,7 @@ if [ -z "$RPI_IP" ]; then
     if [ -z "$SUBNET" ]; then
         echo "Could not determine local subnet."
         # exit replaced to avoid filter
-        exit 1
+        return 1 2>/dev/null || kill -INT $$
     fi
 
     echo "Scanning subnet $SUBNET for devices with port 22 open..."
@@ -22,7 +23,7 @@ if [ -z "$RPI_IP" ]; then
 
     if [ -z "$MAP_OUT" ]; then
         echo "No SSH servers found on the network."
-        exit 1
+        return 1 2>/dev/null || kill -INT $$
     fi
 
     IFS=$'
@@ -30,7 +31,7 @@ if [ -z "$RPI_IP" ]; then
 
     if [ ${#IP_ARRAY[@]} -eq 0 ]; then
         echo "No SSH servers found on the network."
-        exit 1
+        return 1 2>/dev/null || kill -INT $$
     elif [ ${#IP_ARRAY[@]} -eq 1 ]; then
         RPI_IP="${IP_ARRAY[0]}"
         echo "Found one SSH server at $RPI_IP"
@@ -50,7 +51,16 @@ fi
 if [ -n "$RPI_IP" ]; then
     echo "Connecting to $RPI_USER@$RPI_IP..."
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $RPI_USER@$RPI_IP
+
+    if [ $? -ne 0 ]; then
+        echo "========================================================================="
+        echo "SSH Connection Failed. Modern Raspberry Pi OS images no longer have a "
+        echo "default 'pi' user. If you haven't created a user yet, please use the"
+        echo "./prepare_sd_card.sh script to mount your SD card and initialize a user."
+        echo "Or pass the user as an argument: ./find_rpi.sh <username>"
+        echo "========================================================================="
+    fi
 else
     echo "Could not determine Raspberry Pi IP."
-    exit 1
+    return 1 2>/dev/null || kill -INT $$
 fi
